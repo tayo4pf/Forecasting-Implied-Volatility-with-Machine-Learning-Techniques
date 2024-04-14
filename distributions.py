@@ -2,6 +2,46 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import scipy.stats as stats
+from statsmodels.tsa.stattools import acf, pacf
+
+def deannualize(annual_rate: float, periods=365):
+    """
+    Returns the deannualized rate for an annual rate
+    @param annual_rate: the annual rate
+    @param periods: (optional) amount of periods to segment annualized rate to
+    @return: deannualized rate
+    """
+    return (annual_rate) ** (1/periods)
+
+def get_risk_free_rate(start: str, end:str):
+    """
+    Returns dataframe with risk free rates daily and annualized
+    Rates based on 3-Month US Treasury Bills
+    @param start: start date of rates to be downloaded non-inclusive
+    @param end: end date of rates to be downloaded non-inclusive
+    @return: datafram with risk free rates
+    """
+    # Download 3-Month Treasury Bills
+    annualized_rates = 1.0 + (yf.download("^IRX", start=start, end=end)["Adj Close"]/100)
+
+    # De-annualize
+    daily_rates = annualized_rates.apply(deannualize)
+
+    # Return dataframe
+    return pd.DataFrame({"Annualized Rate": annualized_rates, "Daily Rate": daily_rates}) 
+
+def discount(value, start: str, end: str):
+    """
+    Returns the discounted value of the input value at start time given the input value 
+    is the value at end time
+    Discount is based on 3-Month US Treasury Bills
+    @param value: undiscounted value
+    @param start: time for the discounted value
+    @param end: time at the undiscounted value non-inclusive
+    @return: the discounted value
+    """
+    rates = get_risk_free_rate(start, end)
+    return value / np.prod(np.array(rates["Daily Rate"]))
 
 def get_returns(tickers: list[str], start: str, end: str, min=None):
     """
@@ -13,7 +53,10 @@ def get_returns(tickers: list[str], start: str, end: str, min=None):
         (optional)
     :return: dataframe with the returns data
     """
+    # Downloading data
     data = yf.download(tickers, start=start, end=end)
+
+    # Calculating log-returns
     returns = np.log1p(data["Adj Close"].pct_change())
     if min is not None:
         returns = returns.dropna(axis=1, thresh=len(returns)-min)
@@ -25,6 +68,7 @@ def get_realized_volatility(returns, period=1):
     :param returns: Series of the returns of a security
     :param period: Time period to calculate volatility over
     """
+    # Return rolling window standard deviation
     return returns.rolling(window=period).std(ddof=0)*np.sqrt(252)
 
 def returns_distribution(tickers: list[str], start: str, end:str, filename=None, header=None):
@@ -39,10 +83,12 @@ def returns_distribution(tickers: list[str], start: str, end:str, filename=None,
     :return: Dataframe with the number of observations, mean return, standard deviation of returns,
     skewness of returns, kurtosis of returns, and k-squared test p-value of the returns
     """
+    # Download data
     data = yf.download(tickers, start=start, end=end)
     returns = np.log1p(data["Close"].pct_change())
     returns = returns.dropna(axis=1, thresh=len(returns)-200)
     
+    # Construct distribution dataframe
     symbols = returns.columns
     sample_stats = pd.DataFrame({"Observations": (len(returns[symbol]) for symbol in symbols),
                       "Mean Return": list(np.mean(returns, axis=0)),
@@ -52,6 +98,7 @@ def returns_distribution(tickers: list[str], start: str, end:str, filename=None,
                       "K-Squared P-Value": list(stats.normaltest(returns, axis=0, nan_policy='omit').pvalue)},
                       index = symbols)
     
+    # Save to dataframe if filename is provided
     if filename is not None:
         sample_stats.to_csv(filename, header=header)
     
@@ -68,15 +115,18 @@ def returns_autocorrelation(tickers: list[str], start:str, end:str, filename=Non
     :param header: header configuration of the file (optional)
     :return: Three dataframes, autocorrelation, ljung-box q statistic, and p-value
     """
+    # Download data
     data = yf.download(tickers, start=start, end=end)
     returns = np.log1p(data["Adj Close"].pct_change())
     returns = returns.dropna(axis=1, thresh=len(returns)-200)
 
+    # Formatting function
     def ac_format(ac):
         lags = ac[0][1:6]
         rest = ac[1:3]
         return [lags] + list(rest)
 
+    # Collecting autocorrelation statistics
     full_r_ac = np.array(list(ac_format(acf(returns[symbol].dropna(), nlags=5, qstat=True)) for symbol in returns.columns))
     full_sqr_r_ac = np.array(list(ac_format(acf(returns[symbol].dropna()**2, nlags=5, qstat=True)) for symbol in returns.columns))
     full_abs_r_ac = np.array(list(ac_format(acf(abs(returns[symbol].dropna()), nlags=5, qstat=True)) for symbol in returns.columns))
@@ -94,7 +144,6 @@ def returns_autocorrelation(tickers: list[str], start:str, end:str, filename=Non
     abs_r_ldq = full_abs_r_ac[:,1].T
     abs_r_pval = full_abs_r_ac[:,2].T
 
-    symbols = returns.columns
     corr = pd.DataFrame(
     {
     **{("Returns Autocorrelation", f"Lag {l+1}"): r_ac[l] for l in range(5)},

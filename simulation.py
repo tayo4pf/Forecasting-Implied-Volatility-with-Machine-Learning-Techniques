@@ -1,9 +1,12 @@
 import numpy as np
+import datetime
 
 class Simulation:
-    def __init__(self, simulations, period, scale):
+    def __init__(self, simulations, period, scale, start):
         self.simulations = simulations
         self.period = period
+        self.start = datetime.datetime.strptime(start, '%Y-%m-%d')
+        self.end = self.start + datetime.timedelta(days=self.period)
         self.i = 0
         self.scale = scale
 

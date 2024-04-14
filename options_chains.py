@@ -1,6 +1,39 @@
+import yfinance as yf
 import pandas as pd
 import numpy as np
 from statistics import median
+
+def read_options_csv(filename, symbol, start=None, end=None):
+    """
+    Reads csv and ouptuts dataframe with options chain
+    @param filename: Filename containing options chain csv
+    @param symbol: (optional) Symbol of underlying
+    @param start: (optional) Start date of options contract data
+    @param end: (optional) End date of options contract data
+    @returns: Dataframe
+    """
+    # Read and format csv
+    options_chain = pd.read_csv(filename)
+    options_chain['expiration'] = pd.to_datetime(options_chain['expiration'])
+    options_chain = options_chain.astype({
+        'strike':'float',
+        'bid':'float',
+        'ask':'float',
+        'vol':'float',
+        'delta':'float',
+        'gamma':'float',
+        'theta':'float',
+        'vega':'float',
+        'rho':'float'
+        })
+    
+    options_chain = options_chain[options_chain["act_symbol"] == symbol]
+    if start is not None:
+        options_chain = options_chain[options_chain["date"] >= start]
+    if end is not None:
+        options_chain = options_chain[options_chain["date"] <= end]
+    
+    return options_chain
 
 class OptionsChain:
     def __init__(self, ticker: str, year: int):
@@ -38,7 +71,7 @@ class OptionsChain:
         :param dte: Days till expiry
         :param min_moneyness: Minimum moneyness of option
         :param max_moneyness: Maximum moneyness of option
-        :return: Dataframe
+        :return: Dataframe with index as expiry data
         TODO: Factor in contract size
         """
         spy_ask = self.data[(self.data["DTE"] == dte) & (self.data["C DELTA"] >= min_moneyness) & (self.data["C DELTA"] <= max_moneyness)]\
@@ -58,7 +91,7 @@ class OptionsChain:
         :param dte: Days till expiry
         :param min_moneyness: Minimum moneyness of option
         :param max_moneyness: Maximum moneyness of option
-        :return: Dataframe
+        :return: Dataframe with index as expiry date
         TODO: Factor in contract size
         """
         spy_bid = self.data[(self.data["DTE"] == dte) & (self.data["C DELTA"] >= min_moneyness) & (self.data["C DELTA"] <= max_moneyness)]\
@@ -78,7 +111,7 @@ class OptionsChain:
         :param dte: Days till expiry
         :param min_moneyness: Minimum moneyness of option
         :param max_moneyness: Maximum moneyness of option
-        :return: Dataframe
+        :return: Dataframe with index as expiry date
         """
         spy_iv = self.data[(self.data["DTE"] == dte) & (self.data["C DELTA"] >= min_moneyness) & (self.data["C DELTA"] <= max_moneyness)]\
         .groupby("EXPIRE DATE").agg(
