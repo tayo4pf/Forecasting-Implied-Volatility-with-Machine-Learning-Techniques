@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import scipy.stats as stats
 import datetime as dt
 import dateutil as du
-from models import ARCHForecastModel, ARIMAForecastModel, ARIMAARCHForecastModel, HistoricVolModel
+from models.econ_models import ARCHForecastModel, ARIMAForecastModel, ARIMAARCHForecastModel, HistoricVolModel
 import time
 
 def cartesian_product_simple_transpose(arrays):
