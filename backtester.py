@@ -44,7 +44,7 @@ class Backtest:
         }
         for _ in range(repetitions):
             if model is ARCHForecastModel:
-                pack = (ticker, start, end, split, *params, maturation)
+                pack = (ticker, start, end, split, maturation, *params)
             elif model is ARIMAForecastModel:
                 pack = (ticker, start, end, split, maturation, *params)
             elif model is ARIMAARCHForecastModel:

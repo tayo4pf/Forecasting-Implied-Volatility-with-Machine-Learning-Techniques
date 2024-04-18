@@ -64,7 +64,7 @@ def put_option_dist(simulations, s, k):
     return value_over_period
 
 class ARCHModel:
-    def __init__(self, data:pd.DataFrame, split_date:datetime, model:str, p:int, q:int, volatility_period:int):
+    def __init__(self, data:pd.DataFrame, split_date:datetime, volatility_period:int, model:str, p:int, q:int):
         self.underlying_data = data
         self.split_date = split_date
 
@@ -110,7 +110,7 @@ class ARCHForecastModel(ARCHModel):
     """
     Forecaster for option price and implied volatility based on modelling returns with ARCH
     """
-    def __init__(self, ticker:str, start:datetime, end:datetime, split_date:datetime, model:str, p:int, q:int, volatility_period:int):
+    def __init__(self, ticker:str, start:datetime, end:datetime, split_date:datetime, volatility_period:int, model:str, p:int, q:int):
         """
         Initializes an ARCH Forecast Model Object
         @param ticker: Ticker of the underlying security to be forecasted
@@ -122,6 +122,14 @@ class ARCHForecastModel(ARCHModel):
         @param q: ARCH model q value
         @param volatility_period: Period for realized volatility to be measured over
         """
+        # If dates provided are strings, convert them to datetimes
+        if isinstance(start, str):
+            start = datetime.strptime(start,"%Y-%m-%d")
+        if isinstance(split_date, str):
+            split_date = datetime.strpt(split_date,"%Y-%m-%d")
+        if isinstance(end, str):
+            end = datetime.strptime(end, "%Y-%m-%d")
+
         #Storing values
         self.ticker = ticker
         self.start = start
@@ -141,9 +149,9 @@ class ARCHForecastModel(ARCHModel):
             self.underlying_data["Log Returns"],
             volatility_period
         )
-        self.dividends = yf.Ticker(ticker).dividends[start:end]/100
+        self.dividends = yf.Ticker(ticker).dividends/100
         self.dividends.index = self.dividends.index.tz_convert(None)
-        self.rates = distributions.get_risk_free_rate(start, end)
+        self.rates = distributions.get_risk_free_rate(None, None)
         
         #Training model
         model = arch.arch_model(
@@ -183,8 +191,9 @@ class ARCHForecastModel(ARCHModel):
 
         # Finding realized values and fixing realized values to not contain negative values
         # We fill because options expire across weekends, not only trading days
-        filled_underlying_data = self.underlying_data["Adj Close"].reindex(
-            index = pd.date_range(self.start, self.end),
+        data = yf.download(self.ticker, self.start, self.end + datetime.timedelta(days=simulator.period))
+        filled_underlying_data = data["Adj Close"].reindex(
+            index = pd.date_range(self.start, self.end + datetime.timedelta(days=simulator.period)),
             method = "ffill"
         )
         realized_call_value = filled_underlying_data.shift(-simulator.period) - filled_underlying_data
@@ -204,7 +213,7 @@ class ARCHForecastModel(ARCHModel):
 
         # Joining Dividend Yields
         dividends = self.dividends.reindex(
-            index = pd.date_range(self.split_date, self.end),
+            index = pd.date_range(self.dividends.index[0], self.dividends.index[-1]),
             method = "ffill"
         )
         pricing = pricing.join(dividends, how="left").rename(columns={"Dividends":"Dividend Yield"})
@@ -257,6 +266,14 @@ class ARIMAForecastModel:
         @param seasonal_order: The ARIMA seasonal order to be used
         @param volatility_period: The time period used to calculate the volatility
         """
+        # If dates provided are strings, convert them to datetimes
+        if isinstance(start, str):
+            start = datetime.strptime(start,"%Y-%m-%d")
+        if isinstance(split_date, str):
+            split_date = datetime.strpt(split_date,"%Y-%m-%d")
+        if isinstance(end, str):
+            end = datetime.strptime(end, "%Y-%m-%d")
+
         #Storing values
         self.ticker = ticker
         self.start = start
@@ -276,9 +293,9 @@ class ARIMAForecastModel:
             self.underlying_data["Log Returns"],
             volatility_period
         )
-        self.dividends = yf.Ticker(ticker).dividends[start:end]/100
+        self.dividends = yf.Ticker(ticker).dividends/100
         self.dividends.index = self.dividends.index.tz_convert(None)
-        self.rates = distributions.get_risk_free_rate(start, end)
+        self.rates = distributions.get_risk_free_rate(None, None)
         
         #Training model
         self.model = pm.arima.ARIMA(
@@ -351,8 +368,9 @@ class ARIMAForecastModel:
         
         # Finding realized values and fixing realized values to not contain negative values
         # We fill because options expire across weekends, not only trading days
-        filled_underlying_data = self.underlying_data["Adj Close"].reindex(
-            index = pd.date_range(self.start, self.end),
+        data = yf.download(self.ticker, self.start, self.end + datetime.timedelta(days=simulator.period))
+        filled_underlying_data = data["Adj Close"].reindex(
+            index = pd.date_range(self.start, self.end + datetime.timedelta(days=simulator.period)),
             method = "ffill"
         )
         realized_call_value = filled_underlying_data.shift(-simulator.period) - filled_underlying_data
@@ -363,8 +381,7 @@ class ARIMAForecastModel:
         pricing["Realized Put Value"][pricing["Realized Put Value"] < 0] = 0
         
         # Applying discount
-        rates = distributions.get_risk_free_rate(self.split_date, self.end)
-        pricing = pricing.join(rates, how="left")
+        pricing = pricing.join(self.rates, how="left")
         pricing["Cumulative Rate"] = pricing["Daily Rate"].cumprod(skipna=True)
         pricing["Call Price"] /= pricing["Cumulative Rate"]
         pricing["Put Price"] /= pricing["Cumulative Rate"]
@@ -373,7 +390,7 @@ class ARIMAForecastModel:
 
         # Joining Dividend Yields
         dividends = self.dividends.reindex(
-            index = pd.date_range(self.split_date, self.end),
+            index = pd.date_range(self.dividends.index[0], self.dividends.index[-1]),
             method = "ffill"
         )
         pricing = pricing.join(dividends, how="left").rename(columns={"Dividends":"Dividend Yield"})
@@ -421,6 +438,14 @@ class ARIMAARCHForecastModel:
         @param order: The ARIMA order to be used
         @param seasonal_order: The ARIMA seasonal order to be used
         """
+        # If dates provided are strings, convert them to datetimes
+        if isinstance(start, str):
+            start = datetime.strptime(start,"%Y-%m-%d")
+        if isinstance(split_date, str):
+            split_date = datetime.strpt(split_date,"%Y-%m-%d")
+        if isinstance(end, str):
+            end = datetime.strptime(end, "%Y-%m-%d")
+
         #Storing values
         self.ticker = ticker
         self.start = start
@@ -493,8 +518,9 @@ class ARIMAARCHForecastModel:
         
         # Finding realized values and fixing realized values to not contain negative values
         # We fill because options expire across weekends, not only trading days
-        filled_underlying_data = self.underlying_data["Adj Close"].reindex(
-            index = pd.date_range(self.start, self.end),
+        data = yf.download(self.ticker, self.start, self.end + datetime.timedelta(days=simulator.period))
+        filled_underlying_data = data["Adj Close"].reindex(
+            index = pd.date_range(self.start, self.end + datetime.timedelta(days=simulator.period)),
             method = "ffill"
         )
         realized_call_value = filled_underlying_data.shift(-simulator.period) - filled_underlying_data
@@ -505,7 +531,7 @@ class ARIMAARCHForecastModel:
         pricing["Realized Put Value"][pricing["Realized Put Value"] < 0] = 0
 
         # Applying discount
-        rates = distributions.get_risk_free_rate(self.split_date, self.end)
+        rates = self.arima_model.rates
         pricing = pricing.join(rates, how="left")
         pricing["Cumulative Rate"] = pricing["Daily Rate"].cumprod(skipna=True)
         pricing["Call Price"] /= pricing["Cumulative Rate"]
@@ -514,8 +540,8 @@ class ARIMAARCHForecastModel:
         pricing["Realized Put Value"] /= pricing["Cumulative Rate"]
 
         # Joining Dividend Yields
-        dividends = self.dividends.reindex(
-            index = pd.date_range(self.split_date, self.end),
+        dividends = self.arima_model.dividends.reindex(
+            index = pd.date_range(self.arima_model.dividends.index[0], self.arima_model.dividends.index[-1]),
             method = "ffill"
         )
         pricing = pricing.join(dividends, how="left").rename(columns={"Dividends":"Dividend Yield"})
@@ -558,6 +584,14 @@ class HistoricVolModel:
         @param split_data: The end date of the training data, and the start date of the data to be modelled
         @param volatility_period: The time period used to calculate the volatility
         """
+        # If dates provided are strings, convert them to datetimes
+        if isinstance(start, str):
+            start = datetime.strptime(start,"%Y-%m-%d")
+        if isinstance(split_date, str):
+            split_date = datetime.strpt(split_date,"%Y-%m-%d")
+        if isinstance(end, str):
+            end = datetime.strptime(end, "%Y-%m-%d")
+
         #Storing values
         self.ticker = ticker
         self.start = start
@@ -578,6 +612,9 @@ class HistoricVolModel:
             self.underlying_data["Log Returns"],
             volatility_period
         )
+        self.dividends = yf.Ticker(ticker).dividends/100
+        self.dividends.index = self.dividends.index.tz_convert(None)
+        self.rates = distributions.get_risk_free_rate(None, None)
 
     def forecaster(self, period:int):
         pass
@@ -622,8 +659,9 @@ class HistoricVolModel:
 
         # Finding realized values and fixing realized values to not contain negative values
         # We fill because options expire across weekends, not only trading days
+        data = yf.download(self.ticker, self.start, self.end + datetime.timedelta(days=simulator.period))
         filled_underlying_data = self.underlying_data["Adj Close"].reindex(
-            index = pd.date_range(self.start, self.end),
+            index = pd.date_range(self.start, self.end + datetime.timedelta(days=simulator.period)),
             method = "ffill"
         )
         realized_call_value = filled_underlying_data.shift(-simulator.period) - filled_underlying_data
@@ -634,7 +672,7 @@ class HistoricVolModel:
         pricing["Realized Put Value"][pricing["Realized Put Value"] < 0] = 0
 
         # Applying discount
-        rates = distributions.get_risk_free_rate(self.split_date, self.end)
+        rates = self.rates
         pricing = pricing.join(rates, how="left")
         pricing["Cumulative Rate"] = pricing["Daily Rate"].cumprod(skipna=True)
         pricing["Call Price"] /= pricing["Cumulative Rate"]
@@ -644,7 +682,7 @@ class HistoricVolModel:
 
         # Joining Dividend Yields
         dividends = self.dividends.reindex(
-            index = pd.date_range(self.split_date, self.end),
+            index = pd.date_range(self.dividends.index[0], self.dividends.index[-1]),
             method = "ffill"
         )
         pricing = pricing.join(dividends, how="left").rename(columns={"Dividends":"Dividend Yield"})

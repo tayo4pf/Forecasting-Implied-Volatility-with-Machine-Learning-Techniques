@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import scipy.stats as stats
 from statsmodels.tsa.stattools import acf, pacf
+import datetime
 
 def deannualize(annual_rate: float, periods=365):
     """
@@ -61,6 +62,44 @@ def get_returns(tickers: list[str], start: str, end: str, min=None):
     if min is not None:
         returns = returns.dropna(axis=1, thresh=len(returns)-min)
     return returns
+
+def get_realized_option_value(ticker, start: str, end: str, moneyness: float, dte: int):
+    """
+    Returns a dataframe with realized option value (call and put) given
+    a ticker and the start and end date of the data to be collected
+    @param prices: Dataframe with adjusted close of underlying
+    @param moneyness: moneyness of the option
+    @param dte: Days till expiry of the option
+    @return: Dataframe
+    """
+    # Creating filled adjusted close
+    # Because options mature across non-trading days
+    data = yf.download(ticker, start, end)
+    fill_data = yf.download(ticker, start, datetime.datetime.strptime(end,"%Y-%m-%d") + datetime.timedelta(days=dte+1))
+    filled_underlying_data = fill_data["Adj Close"].reindex(
+            index = pd.date_range(fill_data.index[0], fill_data.index[-1]),
+            method = "ffill"
+        ).rename("Underlying")
+    realized_call_value = filled_underlying_data.shift(-dte) - filled_underlying_data
+    realized_put_value = -filled_underlying_data.shift(-dte) + filled_underlying_data
+
+    # Joining Realized Option Values
+    data = data.join(realized_call_value, how="left").rename(columns={"Underlying":"Realized Call Value"})
+    data = data.join(realized_put_value, how="left").rename(columns={"Underlying":"Realized Put Value"})
+
+    # Fixing to remove negative values
+    data["Realized Call Value"][data["Realized Call Value"] < 0] = 0
+    data["Realized Put Value"][data["Realized Put Value"] < 0] = 0
+
+    # Adding Expiry Dates
+    data["Expiry Date"] = data.index + datetime.timedelta(days=dte)
+    
+    # Adding moneyness and days till expiry to dataframe
+    data["Moneyness"] = moneyness
+    data["DTE"] = dte
+
+    return data
+
 
 def get_realized_volatility(returns, period=1):
     """
