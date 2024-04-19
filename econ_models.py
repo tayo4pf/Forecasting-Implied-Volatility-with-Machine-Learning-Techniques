@@ -1,4 +1,7 @@
 import matplotlib.pyplot as plt
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import yfinance as yf
 import numpy as np
 import distributions
@@ -12,7 +15,7 @@ import py_vollib.black_scholes as black_scholes_merton
 import py_vollib_vectorized
 """
 TODO: Include seeds in model initialisation
-TODO: Edit option pricing to extend rates and realized value to the end of forecast
+TODO: Refactor for base Forecast Model Class
 Module for econometric option pricing and IV forecasting models
 """
 
@@ -62,6 +65,47 @@ def put_option_dist(simulations, s, k):
     value_over_period = (k - (s * np.exp(simulations.sum(axis=1))))
     value_over_period[value_over_period < 0] = 0
     return value_over_period
+
+def iv_surface(model, moneynesses, maturities, spot_date):
+    #Calculating IV Surface
+    ivs_df = pd.DataFrame()
+    for dte in maturities:
+        simulator = model.simulation(dte)
+        for moneyness in moneynesses:
+            options = model.options_pricing(simulator, moneyness, shift=False)
+            options = options.reset_index()
+            options["Moneyness"] = moneyness
+            options["DTE"] = dte
+            ivs_df = pd.concat((ivs_df, options), ignore_index=True)
+
+    # Calls
+    spot_chain = ivs_df[ivs_df["Date"] == spot_date].dropna()
+
+    dte_fig = px.line_3d(spot_chain, x="DTE", y="Log Moneyness", z="Call IV", color="DTE")
+    lm_fig = px.line_3d(spot_chain, x="DTE", y="Log Moneyness", z="Call IV", color="Log Moneyness")
+    fig = go.Figure(data=dte_fig.data + lm_fig.data)
+
+    fig.update_layout(title=f'SPY Forecasted Call IV Surface for spot date: {spot_date}')
+    fig.update_scenes(xaxis_title_text="Days Till Expiry",
+                    yaxis_title_text="Log Moneyness",  
+                    zaxis_title_text="Call IV")
+
+    fig.show(renderer="notebook")
+
+    # Puts
+    spot_chain = ivs_df[ivs_df["Date"] == spot_date].dropna()
+
+    dte_fig = px.line_3d(spot_chain, x="DTE", y="Log Moneyness", z="Put IV", color="DTE")
+    lm_fig = px.line_3d(spot_chain, x="DTE", y="Log Moneyness", z="Put IV", color="Log Moneyness")
+    fig = go.Figure(data=dte_fig.data + lm_fig.data)
+
+    fig.update_layout(title='SPY Forecasted Put IV Surface')
+    fig.update_scenes(xaxis_title_text="Days Till Expiry",  
+                    yaxis_title_text="Log Moneyness",  
+                    zaxis_title_text="Put IV")
+
+    fig.show(renderer="notebook")
+    
 
 class ARCHModel:
     def __init__(self, data:pd.DataFrame, split_date:datetime, volatility_period:int, model:str, p:int, q:int):
@@ -124,11 +168,11 @@ class ARCHForecastModel(ARCHModel):
         """
         # If dates provided are strings, convert them to datetimes
         if isinstance(start, str):
-            start = datetime.strptime(start,"%Y-%m-%d")
+            start = datetime.datetime.strptime(start,"%Y-%m-%d")
         if isinstance(split_date, str):
-            split_date = datetime.strpt(split_date,"%Y-%m-%d")
+            split_date = datetime.datetime.strptime(split_date,"%Y-%m-%d")
         if isinstance(end, str):
-            end = datetime.strptime(end, "%Y-%m-%d")
+            end = datetime.datetime.strptime(end, "%Y-%m-%d")
 
         #Storing values
         self.ticker = ticker
@@ -216,6 +260,7 @@ class ARCHForecastModel(ARCHModel):
             index = pd.date_range(self.dividends.index[0], self.dividends.index[-1]),
             method = "ffill"
         )
+        dividends.index = dividends.index.date
         pricing = pricing.join(dividends, how="left").rename(columns={"Dividends":"Dividend Yield"})
 
         # Calculating Implied Volatility
@@ -268,11 +313,11 @@ class ARIMAForecastModel:
         """
         # If dates provided are strings, convert them to datetimes
         if isinstance(start, str):
-            start = datetime.strptime(start,"%Y-%m-%d")
+            start = datetime.datetime.strptime(start,"%Y-%m-%d")
         if isinstance(split_date, str):
-            split_date = datetime.strpt(split_date,"%Y-%m-%d")
+            split_date = datetime.datetime.strptime(split_date,"%Y-%m-%d")
         if isinstance(end, str):
-            end = datetime.strptime(end, "%Y-%m-%d")
+            end = datetime.datetime.strptime(end, "%Y-%m-%d")
 
         #Storing values
         self.ticker = ticker
@@ -393,6 +438,7 @@ class ARIMAForecastModel:
             index = pd.date_range(self.dividends.index[0], self.dividends.index[-1]),
             method = "ffill"
         )
+        dividends.index = dividends.index.date
         pricing = pricing.join(dividends, how="left").rename(columns={"Dividends":"Dividend Yield"})
 
         # Calculating Implied Volatility
@@ -440,11 +486,11 @@ class ARIMAARCHForecastModel:
         """
         # If dates provided are strings, convert them to datetimes
         if isinstance(start, str):
-            start = datetime.strptime(start,"%Y-%m-%d")
+            start = datetime.datetime.strptime(start,"%Y-%m-%d")
         if isinstance(split_date, str):
-            split_date = datetime.strpt(split_date,"%Y-%m-%d")
+            split_date = datetime.datetime.strptime(split_date,"%Y-%m-%d")
         if isinstance(end, str):
-            end = datetime.strptime(end, "%Y-%m-%d")
+            end = datetime.datetime.strptime(end, "%Y-%m-%d")
 
         #Storing values
         self.ticker = ticker
@@ -544,6 +590,7 @@ class ARIMAARCHForecastModel:
             index = pd.date_range(self.arima_model.dividends.index[0], self.arima_model.dividends.index[-1]),
             method = "ffill"
         )
+        dividends.index = dividends.index.date
         pricing = pricing.join(dividends, how="left").rename(columns={"Dividends":"Dividend Yield"})
 
         # Calculating Implied Volatility
@@ -586,11 +633,11 @@ class HistoricVolModel:
         """
         # If dates provided are strings, convert them to datetimes
         if isinstance(start, str):
-            start = datetime.strptime(start,"%Y-%m-%d")
+            start = datetime.datetime.strptime(start,"%Y-%m-%d")
         if isinstance(split_date, str):
-            split_date = datetime.strpt(split_date,"%Y-%m-%d")
+            split_date = datetime.datetime.strptime(split_date,"%Y-%m-%d")
         if isinstance(end, str):
-            end = datetime.strptime(end, "%Y-%m-%d")
+            end = datetime.datetime.strptime(end, "%Y-%m-%d")
 
         #Storing values
         self.ticker = ticker
@@ -685,6 +732,7 @@ class HistoricVolModel:
             index = pd.date_range(self.dividends.index[0], self.dividends.index[-1]),
             method = "ffill"
         )
+        dividends.index = dividends.index.date
         pricing = pricing.join(dividends, how="left").rename(columns={"Dividends":"Dividend Yield"})
 
         # Calculating Implied Volatility
