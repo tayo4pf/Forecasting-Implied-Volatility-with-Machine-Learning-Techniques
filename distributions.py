@@ -65,8 +65,9 @@ def get_returns(tickers: list[str], start: str, end: str, min=None):
 
 def get_realized_option_value(ticker, start: str, end: str, moneyness: float, dte: int):
     """
-    Returns a dataframe with realized option value (call and put) given
+    Returns a dataframe with present realized option value (call and put) given
     a ticker and the start and end date of the data to be collected
+    (NB Value is discounted)
     @param prices: Dataframe with adjusted close of underlying
     @param moneyness: moneyness of the option
     @param dte: Days till expiry of the option
@@ -80,16 +81,6 @@ def get_realized_option_value(ticker, start: str, end: str, moneyness: float, dt
             index = pd.date_range(fill_data.index[0], fill_data.index[-1]),
             method = "ffill"
         ).rename("Underlying")
-    realized_call_value = filled_underlying_data.shift(-dte) - filled_underlying_data
-    realized_put_value = -filled_underlying_data.shift(-dte) + filled_underlying_data
-
-    # Joining Realized Option Values
-    data = data.join(realized_call_value, how="left").rename(columns={"Underlying":"Realized Call Value"})
-    data = data.join(realized_put_value, how="left").rename(columns={"Underlying":"Realized Put Value"})
-
-    # Fixing to remove negative values
-    data["Realized Call Value"][data["Realized Call Value"] < 0] = 0
-    data["Realized Put Value"][data["Realized Put Value"] < 0] = 0
 
     # Adding Expiry Dates
     data["Expiry Date"] = data.index + datetime.timedelta(days=dte)
@@ -97,6 +88,35 @@ def get_realized_option_value(ticker, start: str, end: str, moneyness: float, dt
     # Adding moneyness and days till expiry to dataframe
     data["Moneyness"] = moneyness
     data["DTE"] = dte
+
+    # Adding tau
+    data["Tau"] = dte/252
+
+    # Adding continuous annual dividend yield
+    dividends = yf.Ticker(ticker).dividends/100
+    dividends.index = dividends.index.tz_convert(None)
+    dividends = dividends.reindex(
+        index = pd.date_range(dividends.index[0], dividends.index[-1]),
+        method = "ffill"
+    )
+    dividends.index = dividends.index.date
+    data = data.join(dividends, how="left").rename(columns={"Dividends":"Dividend Yield"})
+
+    # Adding risk free rate
+    rates = get_risk_free_rate(None, None)
+
+    # Joining risk free rate
+    data = data.join(rates, how="left")
+
+    # Joining expired underlying price and strike price
+    data = data.join(filled_underlying_data.shift(-dte), how="left").rename(columns={"Underlying":"Expired Underlying Price"})
+    data["Strike Price"] = data["Adj Close"]/moneyness
+    data["Realized Call Value"] = (data["Expired Underlying Price"] - data["Strike Price"])/(data["Daily Rate"]**dte)
+    data["Realized Put Value"] = (-data["Expired Underlying Price"] + data["Strike Price"])/(data["Daily Rate"]**dte)
+
+    # Fixing to remove negative values
+    data["Realized Call Value"][data["Realized Call Value"] < 0] = 0
+    data["Realized Put Value"][data["Realized Put Value"] < 0] = 0
 
     return data
 

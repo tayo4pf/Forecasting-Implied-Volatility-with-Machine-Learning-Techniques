@@ -1,4 +1,3 @@
-import yfinance as yf
 import pandas as pd
 import numpy as np
 from statistics import median
@@ -64,7 +63,7 @@ class OptionsChain:
         
         self.data = options
 
-    def ask_dist(self, dte: int, min_moneyness: int, max_moneyness: int):
+    def ask_dist(self, dte: int, min_moneyness: float, max_moneyness: float):
         """
         Returns dataframe with minimum, median, and maximum ask prices for puts and calls in
         the options chain given they are of a certain maturity period and moneyness
@@ -72,7 +71,6 @@ class OptionsChain:
         :param min_moneyness: Minimum moneyness of option
         :param max_moneyness: Maximum moneyness of option
         :return: Dataframe with index as expiry data
-        TODO: Factor in contract size
         """
         spy_ask = self.data[(self.data["DTE"] == dte) & (self.data["C DELTA"] >= min_moneyness) & (self.data["C DELTA"] <= max_moneyness)]\
         .groupby("EXPIRE DATE").agg(
@@ -84,7 +82,7 @@ class OptionsChain:
 
         return spy_ask
     
-    def bid_dist(self, dte: int, min_moneyness: int, max_moneyness: int):
+    def bid_dist(self, dte: int, min_moneyness: float, max_moneyness: float):
         """
         Returns dataframe with minimum, median, and maximum bid prices for puts and calls in
         the options chain given they are of a certain maturity period and moneyness
@@ -92,7 +90,6 @@ class OptionsChain:
         :param min_moneyness: Minimum moneyness of option
         :param max_moneyness: Maximum moneyness of option
         :return: Dataframe with index as expiry date
-        TODO: Factor in contract size
         """
         spy_bid = self.data[(self.data["DTE"] == dte) & (self.data["C DELTA"] >= min_moneyness) & (self.data["C DELTA"] <= max_moneyness)]\
         .groupby("EXPIRE DATE").agg(
@@ -104,7 +101,7 @@ class OptionsChain:
 
         return spy_bid
 
-    def iv_dist(self, dte: int, min_moneyness: int, max_moneyness: int):
+    def iv_dist(self, dte: int, min_moneyness: float, max_moneyness: float):
         """
         Returns dataframe with minimum, median, and maximum IV values for puts and calls in
         the options chain given they are of a certain maturity period and moneyness

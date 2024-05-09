@@ -1,3 +1,4 @@
+from typing import Union
 import matplotlib.pyplot as plt
 import plotly.express as px
 import plotly.graph_objects as go
@@ -14,24 +15,23 @@ from simulation import Simulation
 import py_vollib.black_scholes as black_scholes_merton
 import py_vollib_vectorized
 """
-TODO: Include seeds in model initialisation
-TODO: Refactor for base Forecast Model Class
 Module for econometric option pricing and IV forecasting models
 """
 
-def call_option_ev(simulations, s, k):
+def call_option_ev(simulations: np.array, s: float, k: float, r: float = 1.0) -> float:
         """
         Function to find the expected undiscounted value of an option using Monte Carlo estimation
         @param simulations: an nparray, indexed by timestep within the expiration period, then simulation
         @param s: current price of the underlying
         @param k: strike price of the option
         """
-        value_over_period = ((s * np.exp(simulations.sum(axis=1))) - k)
+        dte = simulations.shape[1]
+        value_over_period = ((s * np.exp(simulations.sum(axis=1))) - k)/(r**(dte/252))
         value_over_period[value_over_period < 0] = 0
         ev = np.mean(value_over_period)
         return ev
 
-def call_option_dist(simulations, s, k):
+def call_option_dist(simulations: np.array, s: float, k: float, r: float = 1.0) -> np.array:
     """
     Function to find the distribution of an undiscounted option value
     @param simulations: an nparray, indexed by timestep within the expiration period, then simulation
@@ -39,76 +39,109 @@ def call_option_dist(simulations, s, k):
     @param k: strike price of the option
     @return: np.array of values
     """
-    value_over_period = ((s * np.exp(simulations.sum(axis=1))) - k)
+    dte = simulations.shape[1]
+    value_over_period = ((s * np.exp(simulations.sum(axis=1))) - k)/(r**(dte/252))
     value_over_period[value_over_period < 0] = 0
     return value_over_period
 
-def put_option_ev(simulations, s, k):
+def put_option_ev(simulations: np.array, s: float, k: float, r: float = 1.0) -> float:
     """
     Function to find the expected undiscounted value of an option using Monte Carlo estimation
     @param simulations: an nparray, indexed by timestep within the expiration period, then simulation
     @param s: current price of the underlying
     @param k: strike price of the option
     """
-    value_over_period = (k - (s * np.exp(simulations.sum(axis=1))))
+    dte = simulations.shape[1]
+    value_over_period = (-(s * np.exp(simulations.sum(axis=1))) + k)/(r**(dte/252))
     value_over_period[value_over_period < 0] = 0
     ev = np.mean(value_over_period)
     return ev
 
-def put_option_dist(simulations, s, k):
+def put_option_dist(simulations: np.array, s: float, k: float, r: float = 1.0) -> np.array:
     """
     Function to find the distribution of an undiscounted option value
     @param simulations: an nparray, indexed by timestep within the expiration period, then simulation
     @param s: current price of the underlying
     @param k: strike price of the option
     """
-    value_over_period = (k - (s * np.exp(simulations.sum(axis=1))))
+    dte = simulations.shape[1]
+    value_over_period = (-(s * np.exp(simulations.sum(axis=1))) + k)/(r**(dte/252))
     value_over_period[value_over_period < 0] = 0
     return value_over_period
 
-def iv_surface(model, moneynesses, maturities, spot_date):
-    #Calculating IV Surface
+def iv_surface_dataframe(model, moneynesses: np.array, maturities: np.array) -> pd.core.frame.DataFrame:
+    """
+    Returns dataframe with option pricing and implied volatility data for a given list of moneynesses and maturities
+    If the model is an ARCH Forecast Model, then a forecast for the maximum maturity must be run before this function is called
+    @param model: a forecast model object
+    @param moneynesses: list of moneynesses to generate data for
+    @param maturities: list of maturities to generate data for  
+    """
+    # Creating dataframe
     ivs_df = pd.DataFrame()
+
+    # Iterating maturities
     for dte in maturities:
+        # Generating simulations for lifetime of the option
         simulator = model.simulation(dte)
+
+        # Iterating moneynesses
         for moneyness in moneynesses:
             options = model.options_pricing(simulator, moneyness, shift=False)
             options = options.reset_index()
             options["Moneyness"] = moneyness
             options["DTE"] = dte
             ivs_df = pd.concat((ivs_df, options), ignore_index=True)
+    
+    return ivs_df
 
+def plot_iv_surface(ivs_df: pd.core.frame.DataFrame, spot_date: Union[str, datetime.datetime]):
+    """
+    Plots IV Surface for a given implied volatility surface dataframe (iv_surface_dataframe)
+    @param model: Forecast model
+    @param moneynesses: Array-like of moneynesses in the IV surface
+    @param maturities: Array-like of maturities (DTE) in the IV surface
+    @param spot_date: Spot date of surface to be displayed
+    """
     # Calls
     spot_chain = ivs_df[ivs_df["Date"] == spot_date].dropna()
 
-    dte_fig = px.line_3d(spot_chain, x="DTE", y="Log Moneyness", z="Call IV", color="DTE")
-    lm_fig = px.line_3d(spot_chain, x="DTE", y="Log Moneyness", z="Call IV", color="Log Moneyness")
+    dte_fig = px.line_3d(spot_chain, x="DTE", y="Moneyness", z="Call IV", color="DTE")
+    lm_fig = px.line_3d(spot_chain, x="DTE", y="Moneyness", z="Call IV", color="Moneyness")
     fig = go.Figure(data=dte_fig.data + lm_fig.data)
 
-    fig.update_layout(title=f'SPY Forecasted Call IV Surface for spot date: {spot_date}')
+    fig.update_layout(title=f'Forecasted Call IV Surface for spot date: {spot_date}')
     fig.update_scenes(xaxis_title_text="Days Till Expiry",
-                    yaxis_title_text="Log Moneyness",  
+                    yaxis_title_text="Moneyness",  
                     zaxis_title_text="Call IV")
 
     fig.show(renderer="notebook")
 
-    # Puts
     spot_chain = ivs_df[ivs_df["Date"] == spot_date].dropna()
 
-    dte_fig = px.line_3d(spot_chain, x="DTE", y="Log Moneyness", z="Put IV", color="DTE")
-    lm_fig = px.line_3d(spot_chain, x="DTE", y="Log Moneyness", z="Put IV", color="Log Moneyness")
+    dte_fig = px.line_3d(spot_chain, x="DTE", y="Moneyness", z="Put IV", color="DTE")
+    lm_fig = px.line_3d(spot_chain, x="DTE", y="Moneyness", z="Put IV", color="Moneyness")
     fig = go.Figure(data=dte_fig.data + lm_fig.data)
 
-    fig.update_layout(title='SPY Forecasted Put IV Surface')
+    fig.update_layout(title=f'Forecasted Put IV Surface for Spot Date {spot_date}')
     fig.update_scenes(xaxis_title_text="Days Till Expiry",  
-                    yaxis_title_text="Log Moneyness",  
+                    yaxis_title_text="Moneyness",  
                     zaxis_title_text="Put IV")
 
     fig.show(renderer="notebook")
-    
+
+class EconForecastModel:
+    def forecaster(self):
+        pass
+
+    def simulation(self):
+        pass
+
+    def option_pricing(self):
+        pass
 
 class ARCHModel:
-    def __init__(self, data:pd.DataFrame, split_date:datetime, volatility_period:int, model:str, p:int, q:int):
+    def __init__(self, data:pd.DataFrame, split_date:datetime, volatility_period:int, model:str, p:int, q:int, dist:str = "normal", mean:str = "Zero"):
         self.underlying_data = data
         self.split_date = split_date
 
@@ -120,10 +153,11 @@ class ARCHModel:
         #Training model
         model = arch.arch_model(
             self.underlying_data["Residuals"] * 100, 
-            mean="Zero",
+            mean=mean,
             p=p,
             q=q,
-            vol=model
+            vol=model,
+            dist=dist
         )
         self.res = model.fit(last_obs=self.split_date)
         self.forecast = None
@@ -132,9 +166,12 @@ class ARCHModel:
         self.forecast_i = 0
 
     def forecaster(self, period:int):
+        # Generate forecast
         self.forecast = self.res.forecast(
             horizon=period, start=self.split_date, method="simulation", simulations=1000
             )
+        
+        # Define forecast dataframe
         self.forecast_df = pd.DataFrame(
             {
             "Forecasted Period Volatility":(np.sqrt(self.forecast.variance).mean(axis=1) * np.sqrt(252)/100)[:-21],
@@ -144,17 +181,18 @@ class ARCHModel:
         self.forecast_residuals = self.forecast_df["Forecasted Period Volatility"] - self.underlying_data["Realized Volatility"]
 
     def simulation(self, period):
+        # Check forecast has been generated
         if self.forecast is None:
             raise NotImplementedError("You must first make a forecast")
         if period > self.forecast.simulations.values.shape[2]:
             raise ValueError("Period cannot be greater than forecast period")
         return Simulation(self.forecast.simulations.values, period, 1/100, self.split_date)
 
-class ARCHForecastModel(ARCHModel):
+class ARCHForecastModel(ARCHModel, EconForecastModel):
     """
     Forecaster for option price and implied volatility based on modelling returns with ARCH
     """
-    def __init__(self, ticker:str, start:datetime, end:datetime, split_date:datetime, volatility_period:int, model:str, p:int, q:int):
+    def __init__(self, ticker:str, start:datetime, end:datetime, split_date:datetime, volatility_period:int, model:str, p:int, q:int, dist:str = "normal"):
         """
         Initializes an ARCH Forecast Model Object
         @param ticker: Ticker of the underlying security to be forecasted
@@ -198,14 +236,15 @@ class ARCHForecastModel(ARCHModel):
         self.rates = distributions.get_risk_free_rate(None, None)
         
         #Training model
-        model = arch.arch_model(
+        _model = arch.arch_model(
             self.underlying_data["Log Returns"] * 100, 
             mean="Constant",
             p=p,
             q=q,
-            vol=model
+            vol=model,
+            dist=dist
         )
-        self.res = model.fit(last_obs=split_date)
+        self.res = _model.fit(last_obs=split_date)
         self.forecast = None
         self.forecast_df = None
         self.forecast_residuals = None
@@ -223,37 +262,14 @@ class ARCHForecastModel(ARCHModel):
         """
         #Creating dataframe with pricing
         pricing = pd.DataFrame({
-            "Call Price": (call_option_ev(sim_, price, price*moneyness)\
-                                for sim_, price in zip(simulator, self.underlying_data["Adj Close"][self.split_date:])),
-            "Put Price": (put_option_ev(sim_, price, price*moneyness)\
-                                for sim_, price in zip(simulator, self.underlying_data["Adj Close"][self.split_date:])),
             "Underlying Price": self.underlying_data["Adj Close"][self.split_date:]},
             index = self.forecast.variance.index)
-        
-        # Dropping dates outside forecast
-        pricing = pricing.dropna(axis=0, subset="Call Price")
 
-        # Finding realized values and fixing realized values to not contain negative values
-        # We fill because options expire across weekends, not only trading days
-        data = yf.download(self.ticker, self.start, self.end + datetime.timedelta(days=simulator.period))
-        filled_underlying_data = data["Adj Close"].reindex(
-            index = pd.date_range(self.start, self.end + datetime.timedelta(days=simulator.period)),
-            method = "ffill"
-        )
-        realized_call_value = filled_underlying_data.shift(-simulator.period) - filled_underlying_data
-        realized_put_value = -filled_underlying_data.shift(-simulator.period) + filled_underlying_data
-        pricing = pricing.join(realized_call_value, how="left").rename(columns={"Adj Close":"Realized Call Value"})
-        pricing = pricing.join(realized_put_value, how="left").rename(columns={"Adj Close":"Realized Put Value"})
-        pricing["Realized Call Value"][pricing["Realized Call Value"] < 0] = 0
-        pricing["Realized Put Value"][pricing["Realized Put Value"] < 0] = 0
+        # Creating Expiry date column
+        pricing["Expiry Date"] = pricing.index + datetime.timedelta(days=simulator.period)
 
         # Applying discount
         pricing = pricing.join(self.rates, how="left")
-        pricing["Cumulative Rate"] = pricing["Daily Rate"].cumprod(skipna=True)
-        pricing["Call Price"] /= pricing["Cumulative Rate"]
-        pricing["Put Price"] /= pricing["Cumulative Rate"]
-        pricing["Realized Call Value"] /= pricing["Cumulative Rate"]
-        pricing["Realized Put Value"] /= pricing["Cumulative Rate"]
 
         # Joining Dividend Yields
         dividends = self.dividends.reindex(
@@ -263,11 +279,33 @@ class ARCHForecastModel(ARCHModel):
         dividends.index = dividends.index.date
         pricing = pricing.join(dividends, how="left").rename(columns={"Dividends":"Dividend Yield"})
 
+        # Finding realized values and fixing realized values to not contain negative values
+        # We fill because options expire across weekends, not only trading days
+        data = yf.download(self.ticker, self.start, self.end + datetime.timedelta(days=simulator.period))
+        filled_underlying_data = data["Adj Close"].reindex(
+            index = pd.date_range(self.start, self.end + datetime.timedelta(days=simulator.period)),
+            method = "ffill"
+        )
+        pricing = pricing.join(filled_underlying_data.shift(-simulator.period), how="left").rename(columns={"Adj Close":"Expired Underlying Price"}) 
+        pricing["Strike Price"] = pricing["Underlying Price"]/moneyness
+        pricing["Realized Call Value"] = (pricing["Expired Underlying Price"] - pricing["Strike Price"])/(pricing["Daily Rate"]**simulator.period)
+        pricing["Realized Put Value"] = (-pricing["Expired Underlying Price"] + pricing["Strike Price"])/(pricing["Daily Rate"]**simulator.period)
+        pricing["Realized Call Value"][pricing["Realized Call Value"] < 0] = 0
+        pricing["Realized Put Value"][pricing["Realized Put Value"] < 0] = 0
+
+        pricing["Call Price"] = list(call_option_ev(sim_, price, price/moneyness, r) 
+                                 for sim_, price, r in zip(simulator, self.underlying_data["Adj Close"][self.split_date:], pricing["Annualized Rate"]))
+        pricing["Put Price"] = list(put_option_ev(sim_, price, price/moneyness, r) 
+                                 for sim_, price, r in zip(simulator, self.underlying_data["Adj Close"][self.split_date:], pricing["Annualized Rate"]))
+
+        # Dropping dates outside forecast
+        pricing = pricing.dropna(axis=0, subset="Call Price")
+
         # Calculating Implied Volatility
         pricing["Call IV"] = black_scholes_merton.implied_volatility.implied_volatility(
             pricing["Call Price"],
             pricing["Underlying Price"],
-            pricing["Underlying Price"]*moneyness,
+            pricing["Underlying Price"]/moneyness,
             simulator.period/252,
             pricing["Annualized Rate"]-1,
             ["c"],
@@ -277,7 +315,7 @@ class ARCHForecastModel(ARCHModel):
         pricing["Put IV"] = black_scholes_merton.implied_volatility.implied_volatility(
             pricing["Put Price"],
             pricing["Underlying Price"],
-            pricing["Underlying Price"]*moneyness,
+            pricing["Underlying Price"]/moneyness,
             simulator.period/252,
             pricing["Annualized Rate"]-1,
             ["p"],
@@ -287,7 +325,7 @@ class ARCHForecastModel(ARCHModel):
 
         #Shifting to expiry date
         if shift:
-            pricing.index += datetime.timedelta(days=simulator.period)
+            pricing.set_index("Expiry Date").rename(columns={"index":"Date"})
 
         
         return pricing
@@ -299,7 +337,7 @@ class ARCHForecastModel(ARCHModel):
         """
         plt.plot(self.res.conditional_volatility.rolling(window=period).mean()*np.sqrt(252)/100)
 
-class ARIMAForecastModel:
+class ARIMAForecastModel(EconForecastModel):
     def __init__(self,ticker:str, start:datetime, end:datetime, split_date:datetime, volatility_period:int, order:tuple, seasonal_order:tuple=(0,0,0,0)):
         """
         Initializes an ARIMA Forecast Model Object
@@ -384,13 +422,13 @@ class ARIMAForecastModel:
         cv = RollingForecastCV(h=period, step=1, initial=len(self.underlying_data["Log Returns"][:self.split_date]))
         data_generator = cv.split(self.underlying_data["Log Returns"])
         sim = np.array([self.model.fit(self.underlying_data["Log Returns"][indices[0]]).arima_res_.simulate(
-            nsimulations=period, repetitions=1000, anchor=len(self.underlying_data["Log Returns"][:self.split_date]+i)).T 
+            nsimulations=period, repetitions=1000, anchor=len(self.underlying_data["Log Returns"][:self.split_date])+i).T 
             for i, indices in enumerate(data_generator)])
         return Simulation(sim, period, 1, self.split_date)
     
     def options_pricing(self, simulator, moneyness, shift=True):
         """
-        Returns Dataframe with call, and put, forecasted pricing (present value)
+        Returns Dataframe with call, and put, forecasted pricing (present value), and realized value (present value)
         using monte carlo estimation with the passed simulator object
         @param simulator: Simulator object to be used for estimation
         @param moneyness: fraction into the money the option is
@@ -400,38 +438,15 @@ class ARIMAForecastModel:
         """
         #Creating dataframe with pricing
         pricing = pd.DataFrame({
-            "Call Price": (call_option_ev(sim_, price, price*moneyness)\
-                                for sim_, price in zip(simulator, self.underlying_data["Adj Close"][self.split_date:])),
-            "Put Price": (put_option_ev(sim_, price, price*moneyness)\
-                                for sim_, price in zip(simulator, self.underlying_data["Adj Close"][self.split_date:])),
             "Underlying Price": self.underlying_data["Adj Close"][self.split_date:]},
-            index = self.underlying_data["Adj Close"][self.split_date:][:-simulator.period+1].index
+            index = self.underlying_data["Adj Close"][self.split_date:][:simulator.length].index
         )
 
-        # Drop rows outside forecast
-        pricing = pricing.dropna(axis=0, subset="Call Price")
-        
-        # Finding realized values and fixing realized values to not contain negative values
-        # We fill because options expire across weekends, not only trading days
-        data = yf.download(self.ticker, self.start, self.end + datetime.timedelta(days=simulator.period))
-        filled_underlying_data = data["Adj Close"].reindex(
-            index = pd.date_range(self.start, self.end + datetime.timedelta(days=simulator.period)),
-            method = "ffill"
-        )
-        realized_call_value = filled_underlying_data.shift(-simulator.period) - filled_underlying_data
-        realized_put_value = -filled_underlying_data.shift(-simulator.period) + filled_underlying_data
-        pricing = pricing.join(realized_call_value, how="left").rename(columns={"Adj Close":"Realized Call Value"})
-        pricing = pricing.join(realized_put_value, how="left").rename(columns={"Adj Close":"Realized Put Value"})
-        pricing["Realized Call Value"][pricing["Realized Call Value"] < 0] = 0
-        pricing["Realized Put Value"][pricing["Realized Put Value"] < 0] = 0
-        
+        # Creating Expiry date column
+        pricing["Expiry Date"] = pricing.index + datetime.timedelta(days=simulator.period)
+
         # Applying discount
         pricing = pricing.join(self.rates, how="left")
-        pricing["Cumulative Rate"] = pricing["Daily Rate"].cumprod(skipna=True)
-        pricing["Call Price"] /= pricing["Cumulative Rate"]
-        pricing["Put Price"] /= pricing["Cumulative Rate"]
-        pricing["Realized Call Value"] /= pricing["Cumulative Rate"]
-        pricing["Realized Put Value"] /= pricing["Cumulative Rate"]
 
         # Joining Dividend Yields
         dividends = self.dividends.reindex(
@@ -441,11 +456,33 @@ class ARIMAForecastModel:
         dividends.index = dividends.index.date
         pricing = pricing.join(dividends, how="left").rename(columns={"Dividends":"Dividend Yield"})
 
+        # Finding realized values and fixing realized values to not contain negative values
+        # We fill because options expire across weekends, not only trading days
+        data = yf.download(self.ticker, self.start, self.end + datetime.timedelta(days=simulator.period))
+        filled_underlying_data = data["Adj Close"].reindex(
+            index = pd.date_range(self.start, self.end + datetime.timedelta(days=simulator.period)),
+            method = "ffill"
+        )
+        pricing = pricing.join(filled_underlying_data.shift(-simulator.period), how="left").rename(columns={"Adj Close":"Expired Underlying Price"}) 
+        pricing["Strike Price"] = pricing["Underlying Price"]/moneyness
+        pricing["Realized Call Value"] = (pricing["Expired Underlying Price"] - pricing["Strike Price"])/(pricing["Daily Rate"]**simulator.period)
+        pricing["Realized Put Value"] = (-pricing["Expired Underlying Price"] + pricing["Strike Price"])/(pricing["Daily Rate"]**simulator.period)
+        pricing["Realized Call Value"][pricing["Realized Call Value"] < 0] = 0
+        pricing["Realized Put Value"][pricing["Realized Put Value"] < 0] = 0
+
+        pricing["Call Price"] = list(call_option_ev(sim_, price, price/moneyness, r) 
+                                 for sim_, price, r in zip(simulator, self.underlying_data["Adj Close"][self.split_date:], pricing["Annualized Rate"]))
+        pricing["Put Price"] = list(put_option_ev(sim_, price, price/moneyness, r) 
+                                 for sim_, price, r in zip(simulator, self.underlying_data["Adj Close"][self.split_date:], pricing["Annualized Rate"]))
+
+        # Dropping dates outside forecast
+        pricing = pricing.dropna(axis=0, subset="Call Price")
+
         # Calculating Implied Volatility
         pricing["Call IV"] = black_scholes_merton.implied_volatility.implied_volatility(
             pricing["Call Price"],
             pricing["Underlying Price"],
-            pricing["Underlying Price"]*moneyness,
+            pricing["Underlying Price"]/moneyness,
             simulator.period/252,
             pricing["Annualized Rate"]-1,
             ["c"],
@@ -455,7 +492,7 @@ class ARIMAForecastModel:
         pricing["Put IV"] = black_scholes_merton.implied_volatility.implied_volatility(
             pricing["Put Price"],
             pricing["Underlying Price"],
-            pricing["Underlying Price"]*moneyness,
+            pricing["Underlying Price"]/moneyness,
             simulator.period/252,
             pricing["Annualized Rate"]-1,
             ["p"],
@@ -465,11 +502,11 @@ class ARIMAForecastModel:
 
         #Shifting to expiry date
         if shift:
-            pricing.index += datetime.timedelta(days=simulator.period)
+            pricing.set_index("Expiry Date").rename(columns={"index":"Date"})
         
         return pricing
 
-class ARIMAARCHForecastModel:
+class ARIMAARCHForecastModel(EconForecastModel):
     def __init__(self, ticker:str, start:datetime, end:datetime, split_date:datetime, volatility_period:int, p:int, q:int, model:str, order:tuple, seasonal_order:tuple=(0,0,0,0)):
         """
         Initializes an ARIMA+GARCH Forecast Model Object
@@ -518,7 +555,7 @@ class ARIMAARCHForecastModel:
         
         #Training ARIMA and GARCH Models
         self.arima_model = ARIMAForecastModel(ticker, start, end, split_date, volatility_period, order, seasonal_order)
-        self.arch_model = ARCHModel(pd.DataFrame({"Residuals":(self.arima_model.res.predict_in_sample()/100) - self.underlying_data["Log Returns"]}, index=self.underlying_data.index).replace(np.nan, 0), split_date, self.model, self.p, self.q, self.volatility_period)
+        self.arch_model = ARCHModel(pd.DataFrame({"Residuals":(self.arima_model.res.predict_in_sample()) - self.underlying_data["Log Returns"]}, index=self.underlying_data.index).replace(np.nan, 0), split_date, self.volatility_period, self.model, self.p, self.q)
         self.forecast = None
         self.forecast_df = None
         self.forecast_residuals = None
@@ -551,39 +588,16 @@ class ARIMAARCHForecastModel:
         """
         #Creating dataframe with pricing
         pricing = pd.DataFrame({
-            "Call Price": (call_option_ev(sim_, price, price*moneyness)\
-                                for sim_, price in zip(simulator, self.underlying_data["Adj Close"][self.split_date:])),
-            "Put Price": (put_option_ev(sim_, price, price*moneyness)\
-                                for sim_, price in zip(simulator, self.underlying_data["Adj Close"][self.split_date:])),
             "Underlying Price": self.underlying_data["Adj Close"][self.split_date:]},
             index = self.underlying_data["Adj Close"][self.split_date:][:-simulator.period+1].index
         )
 
-        # Drop rows outside forecast
-        pricing = pricing.dropna(axis=0, subset="Call Price")
-        
-        # Finding realized values and fixing realized values to not contain negative values
-        # We fill because options expire across weekends, not only trading days
-        data = yf.download(self.ticker, self.start, self.end + datetime.timedelta(days=simulator.period))
-        filled_underlying_data = data["Adj Close"].reindex(
-            index = pd.date_range(self.start, self.end + datetime.timedelta(days=simulator.period)),
-            method = "ffill"
-        )
-        realized_call_value = filled_underlying_data.shift(-simulator.period) - filled_underlying_data
-        realized_put_value = -filled_underlying_data.shift(-simulator.period) + filled_underlying_data
-        pricing = pricing.join(realized_call_value, how="left").rename(columns={"Adj Close":"Realized Call Value"})
-        pricing = pricing.join(realized_put_value, how="left").rename(columns={"Adj Close":"Realized Put Value"})
-        pricing["Realized Call Value"][pricing["Realized Call Value"] < 0] = 0
-        pricing["Realized Put Value"][pricing["Realized Put Value"] < 0] = 0
+        # Creating Expiry date column
+        pricing["Expiry Date"] = pricing.index + datetime.timedelta(days=simulator.period)
 
         # Applying discount
         rates = self.arima_model.rates
         pricing = pricing.join(rates, how="left")
-        pricing["Cumulative Rate"] = pricing["Daily Rate"].cumprod(skipna=True)
-        pricing["Call Price"] /= pricing["Cumulative Rate"]
-        pricing["Put Price"] /= pricing["Cumulative Rate"]
-        pricing["Realized Call Value"] /= pricing["Cumulative Rate"]
-        pricing["Realized Put Value"] /= pricing["Cumulative Rate"]
 
         # Joining Dividend Yields
         dividends = self.arima_model.dividends.reindex(
@@ -593,11 +607,30 @@ class ARIMAARCHForecastModel:
         dividends.index = dividends.index.date
         pricing = pricing.join(dividends, how="left").rename(columns={"Dividends":"Dividend Yield"})
 
+        # Finding realized values and fixing realized values to not contain negative values
+        # We fill because options expire across weekends, not only trading days
+        data = yf.download(self.ticker, self.start, self.end + datetime.timedelta(days=simulator.period))
+        filled_underlying_data = data["Adj Close"].reindex(
+            index = pd.date_range(self.start, self.end + datetime.timedelta(days=simulator.period)),
+            method = "ffill"
+        )
+        pricing = pricing.join(filled_underlying_data.shift(-simulator.period), how="left").rename(columns={"Adj Close":"Expired Underlying Price"}) 
+        pricing["Strike Price"] = pricing["Underlying Price"]/moneyness
+        pricing["Realized Call Value"] = (pricing["Expired Underlying Price"] - pricing["Strike Price"])/(pricing["Daily Rate"]**simulator.period)
+        pricing["Realized Put Value"] = (-pricing["Expired Underlying Price"] + pricing["Strike Price"])/(pricing["Daily Rate"]**simulator.period)
+        pricing["Realized Call Value"][pricing["Realized Call Value"] < 0] = 0
+        pricing["Realized Put Value"][pricing["Realized Put Value"] < 0] = 0
+
+        pricing["Call Price"] = list(call_option_ev(sim_, price, price/moneyness, r) 
+                                 for sim_, price, r in zip(simulator, self.underlying_data["Adj Close"][self.split_date:], pricing["Annualized Rate"]))
+        pricing["Put Price"] = list(put_option_ev(sim_, price, price/moneyness, r) 
+                                 for sim_, price, r in zip(simulator, self.underlying_data["Adj Close"][self.split_date:], pricing["Annualized Rate"]))
+
         # Calculating Implied Volatility
         pricing["Call IV"] = black_scholes_merton.implied_volatility.implied_volatility(
             pricing["Call Price"],
             pricing["Underlying Price"],
-            pricing["Underlying Price"]*moneyness,
+            pricing["Underlying Price"]/moneyness,
             simulator.period/252,
             pricing["Annualized Rate"]-1,
             ["c"],
@@ -607,7 +640,7 @@ class ARIMAARCHForecastModel:
         pricing["Put IV"] = black_scholes_merton.implied_volatility.implied_volatility(
             pricing["Put Price"],
             pricing["Underlying Price"],
-            pricing["Underlying Price"]*moneyness,
+            pricing["Underlying Price"]/moneyness,
             simulator.period/252,
             pricing["Annualized Rate"]-1,
             ["p"],
@@ -617,11 +650,11 @@ class ARIMAARCHForecastModel:
 
         #Shifting to expiry date
         if shift:
-            pricing.index += datetime.timedelta(days=simulator.period)
+            pricing.set_index("Expiry Date").rename(columns={"index":"Date"})
 
         return pricing
 
-class HistoricVolModel:
+class HistoricVolModel(EconForecastModel):
     def __init__(self, ticker:str, start:datetime, end:datetime, split_date:datetime, volatility_period:int, historic_r_period:int, historic_vol_period:int):
         """
         Initializes an Historical Volatility based Model Object
@@ -683,9 +716,10 @@ class HistoricVolModel:
     
     def options_pricing(self, simulator, moneyness, shift=True):
         """
+        TODO: Implement black-scholes pricing if simulator is None
         Returns Dataframe with call, and put, forecasted pricing
         using monte carlo estimation with the passed simulator object
-        @param simulator: Simulator object to be used for estimation
+        @param simulator: (optional) simulator object to be used for estimation, if None, the model will use the black scholes formula to price the options
         @param moneyness: fraction into the money the option is
         @param shift: whether to shift the date to the expiry date (True) or leave it at date
         of forecast (optional)
@@ -693,39 +727,15 @@ class HistoricVolModel:
         """
         #Creating dataframe with pricing
         pricing = pd.DataFrame({
-            "Call Price": (call_option_ev(sim_, price, price*moneyness)\
-                                for sim_, price in zip(simulator, self.underlying_data["Adj Close"][self.split_date:])),
-            "Put Price": (put_option_ev(sim_, price, price*moneyness)\
-                                for sim_, price in zip(simulator, self.underlying_data["Adj Close"][self.split_date:])),
             "Underlying Price": self.underlying_data["Adj Close"][self.split_date:]},
             index = self.underlying_data["Adj Close"][self.split_date:].index
         )
 
-        # Drop rows outside forecast
-        pricing = pricing.dropna(axis=0, subset="Call Price")
-
-        # Finding realized values and fixing realized values to not contain negative values
-        # We fill because options expire across weekends, not only trading days
-        data = yf.download(self.ticker, self.start, self.end + datetime.timedelta(days=simulator.period))
-        filled_underlying_data = self.underlying_data["Adj Close"].reindex(
-            index = pd.date_range(self.start, self.end + datetime.timedelta(days=simulator.period)),
-            method = "ffill"
-        )
-        realized_call_value = filled_underlying_data.shift(-simulator.period) - filled_underlying_data
-        realized_put_value = -filled_underlying_data.shift(-simulator.period) + filled_underlying_data
-        pricing = pricing.join(realized_call_value, how="left").rename(columns={"Adj Close":"Realized Call Value"})
-        pricing = pricing.join(realized_put_value, how="left").rename(columns={"Adj Close":"Realized Put Value"})
-        pricing["Realized Call Value"][pricing["Realized Call Value"] < 0] = 0
-        pricing["Realized Put Value"][pricing["Realized Put Value"] < 0] = 0
+        # Creating Expiry date column
+        pricing["Expiry Date"] = pricing.index + datetime.timedelta(days=simulator.period)
 
         # Applying discount
-        rates = self.rates
-        pricing = pricing.join(rates, how="left")
-        pricing["Cumulative Rate"] = pricing["Daily Rate"].cumprod(skipna=True)
-        pricing["Call Price"] /= pricing["Cumulative Rate"]
-        pricing["Put Price"] /= pricing["Cumulative Rate"]
-        pricing["Realized Call Value"] /= pricing["Cumulative Rate"]
-        pricing["Realized Put Value"] /= pricing["Cumulative Rate"]
+        pricing = pricing.join(self.rates, how="left")
 
         # Joining Dividend Yields
         dividends = self.dividends.reindex(
@@ -735,11 +745,33 @@ class HistoricVolModel:
         dividends.index = dividends.index.date
         pricing = pricing.join(dividends, how="left").rename(columns={"Dividends":"Dividend Yield"})
 
+        # Finding realized values and fixing realized values to not contain negative values
+        # We fill because options expire across weekends, not only trading days
+        data = yf.download(self.ticker, self.start, self.end + datetime.timedelta(days=simulator.period))
+        filled_underlying_data = data["Adj Close"].reindex(
+            index = pd.date_range(self.start, self.end + datetime.timedelta(days=simulator.period)),
+            method = "ffill"
+        )
+        pricing = pricing.join(filled_underlying_data.shift(-simulator.period), how="left").rename(columns={"Adj Close":"Expired Underlying Price"}) 
+        pricing["Strike Price"] = pricing["Underlying Price"]/moneyness
+        pricing["Realized Call Value"] = (pricing["Expired Underlying Price"] - pricing["Strike Price"])/(pricing["Daily Rate"]**simulator.period)
+        pricing["Realized Put Value"] = (-pricing["Expired Underlying Price"] + pricing["Strike Price"])/(pricing["Daily Rate"]**simulator.period)
+        pricing["Realized Call Value"][pricing["Realized Call Value"] < 0] = 0
+        pricing["Realized Put Value"][pricing["Realized Put Value"] < 0] = 0
+
+        pricing["Call Price"] = list(call_option_ev(sim_, price, price/moneyness, r) 
+                                 for sim_, price, r in zip(simulator, self.underlying_data["Adj Close"][self.split_date:], pricing["Annualized Rate"]))
+        pricing["Put Price"] = list(put_option_ev(sim_, price, price/moneyness, r) 
+                                 for sim_, price, r in zip(simulator, self.underlying_data["Adj Close"][self.split_date:], pricing["Annualized Rate"]))
+
+        # Dropping dates outside forecast
+        pricing = pricing.dropna(axis=0, subset="Call Price")
+
         # Calculating Implied Volatility
         pricing["Call IV"] = black_scholes_merton.implied_volatility.implied_volatility(
             pricing["Call Price"],
             pricing["Underlying Price"],
-            pricing["Underlying Price"]*moneyness,
+            pricing["Underlying Price"]/moneyness,
             simulator.period/252,
             pricing["Annualized Rate"]-1,
             ["c"],
@@ -749,7 +781,7 @@ class HistoricVolModel:
         pricing["Put IV"] = black_scholes_merton.implied_volatility.implied_volatility(
             pricing["Put Price"],
             pricing["Underlying Price"],
-            pricing["Underlying Price"]*moneyness,
+            pricing["Underlying Price"]/moneyness,
             simulator.period/252,
             pricing["Annualized Rate"]-1,
             ["p"],
@@ -759,6 +791,6 @@ class HistoricVolModel:
 
         #Shifting to expiry date
         if shift:
-            pricing.index += datetime.timedelta(days=simulator.period)
+            pricing.set_index("Expiry Date").rename(columns={"index":"Date"})
         
         return pricing

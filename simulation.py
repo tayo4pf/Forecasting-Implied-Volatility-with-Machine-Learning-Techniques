@@ -3,7 +3,8 @@ import datetime
 
 class Simulation:
     def __init__(self, simulations, period, scale, start):
-        self.simulations = simulations
+        self.simulations = simulations[:,:,:period]
+        self.length = len(simulations)
         self.period = period
         self.start = start
         self.end = self.start + datetime.timedelta(days=self.period)
